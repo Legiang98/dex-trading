@@ -4,7 +4,7 @@ export async function sendTelegramMessage(chatId: string, token: string, message
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: "Markdown" }),
+            body: JSON.stringify({ chat_id: chatId, text: message }),
         });
     } catch (err) {
         console.error("Failed to send Telegram message:", err);
@@ -49,7 +49,7 @@ export async function sendNotification(
     const stopLossNum = stopLoss ? (typeof stopLoss === 'string' ? parseFloat(stopLoss) : stopLoss) : undefined;
 
     const action = isBuy ? "🟢 BUY" : "🔴 SELL";
-    let message = `*${title}*\n${action} ${symbol} @ ${priceNum}`;
+    let message = `${title}\n${action} ${symbol} @ ${priceNum}`;
 
     if (positionValue) {
         message += `\n💵 Position Value: $${positionValue.toFixed(2)}`;
