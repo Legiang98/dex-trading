@@ -49,7 +49,7 @@ export async function sendNotification(
     const stopLossNum = stopLoss ? (typeof stopLoss === 'string' ? parseFloat(stopLoss) : stopLoss) : undefined;
 
     const action = isBuy ? "🟢 BUY" : "🔴 SELL";
-    let message = `✅ *${title}*\n${action} ${symbol} @ ${priceNum}`;
+    let message = `*${title}*\n${action} ${symbol} @ ${priceNum}`;
 
     if (positionValue) {
         message += `\n💵 Position Value: $${positionValue.toFixed(2)}`;
