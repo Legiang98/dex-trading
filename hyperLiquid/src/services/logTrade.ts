@@ -2,7 +2,12 @@ import { WebhookPayload, OrderResult } from "../types";
 
 /**
  * Log trade execution details
- * TODO: Integrate with Application Insights and Telegram
+ * Currently logs to console and Azure Function context
+ * @param signal - Webhook payload containing trade details
+ * @param result - Order execution result
+ * @param context - Optional Azure Function context for logging
+ * @todo Integrate with Application Insights
+ * @todo Send notifications to Telegram channel
  */
 export async function logTrade(
     signal: WebhookPayload,
@@ -28,6 +33,6 @@ export async function logTrade(
 
     // TODO: Send to Application Insights
     // TODO: Send to Telegram channel
-    
+
     console.log("Trade executed:", logEntry);
 }

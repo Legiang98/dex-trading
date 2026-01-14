@@ -13,15 +13,16 @@
     "test": "echo \"No tests yet...\""
   },
   "dependencies": {
+    "@azure/data-tables": "^13.2.2",
     "@azure/functions": "^4.0.0",
     "@nktkas/hyperliquid": "^0.27.1",
-    "@azure/data-tables": "^13.2.2",
     "joi": "^18.0.2"
   },
   "devDependencies": {
     "@types/dotenv": "^6.1.1",
     "@types/node": "22.x",
     "azure-functions-core-tools": "^4.x",
+    "dotenv": "^17.2.3",
     "rimraf": "^5.0.0",
     "typescript": "^5.9.3"
   },

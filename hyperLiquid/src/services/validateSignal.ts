@@ -1,10 +1,11 @@
 import { WebhookPayload, ValidationResult } from "../types";
 import * as hl from "@nktkas/hyperliquid";
 import { InvocationContext } from "@azure/functions";
-import { findOpenOrderByOid } from '../db/tableStorage.repository';
+import { getOrder } from '../db/tableStorage.repository';
 
 /**
- * Create a HyperLiquid InfoClient instance for API calls.
+ * Create a HyperLiquid InfoClient instance for API calls
+ * @returns Configured InfoClient for testnet or mainnet based on environment
  */
 function createInfoClient(): hl.InfoClient {
     return new hl.InfoClient({
@@ -15,30 +16,34 @@ function createInfoClient(): hl.InfoClient {
 }
 
 /**
- * Check if the user has an open position for the given symbol and strategy.
- * Validates by checking if order exists in both HyperLiquid API and database.
+ * Check if the user has an open position for the given symbol and strategy
+ * Validates by checking database record and verifying order status on HyperLiquid
+ * @param symbol - Trading symbol
+ * @param strategy - Strategy name
+ * @param userAddress - User's wallet address
+ * @param context - Optional context for logging
+ * @returns True if position exists and order is filled
  */
-async function hasOpenPosition(symbol: string, strategy: string, userAddress: string): Promise<boolean> {
+async function hasOpenPosition(
+    symbol: string,
+    strategy: string,
+    userAddress: string,
+    context?: any
+): Promise<boolean> {
     try {
-        // Get HyperLiquid open orders for this symbol
         const infoClient = createInfoClient();
-        const openOrders = await infoClient.openOrders({ user: userAddress as `0x${string}` });
-        const symbolOrders = openOrders.filter(order => order.coin === symbol);
-
-        if (symbolOrders.length === 0) {
+        const openOrder = await getOrder({ symbol, strategy, status: "open" });
+        if (!openOrder) {
             return false;
         }
-
-        // Check if any of these orders exist in database with status='open'
-
-
-        for (const order of symbolOrders) {
-            const dbOrder = await findOpenOrderByOid(symbol, order.oid.toString());
-            if (dbOrder && dbOrder.strategy === strategy) {
-                return true;
-            }
+        const openOrderOid = openOrder.oid;
+        const orderStatus = await infoClient.orderStatus({ user: userAddress as `0x${string}`, oid: openOrderOid });
+        // Type guard: check if response has order property
+        if (orderStatus.status === "order") {
+            return orderStatus.order.status === "filled";
         }
 
+        console.log("Order not found or unknown status");
         return false;
     } catch (error) {
         console.error("Error checking position:", error);
@@ -47,7 +52,9 @@ async function hasOpenPosition(symbol: string, strategy: string, userAddress: st
 }
 
 /**
- * Validate if the symbol exists on HyperLiquid.
+ * Validate if the symbol exists on HyperLiquid
+ * @param symbol - Trading symbol to validate
+ * @returns True if symbol exists in HyperLiquid universe
  */
 async function isValidSymbol(symbol: string): Promise<boolean> {
     const infoClient = createInfoClient();
@@ -56,9 +63,11 @@ async function isValidSymbol(symbol: string): Promise<boolean> {
 }
 
 /**
- * Validate stop loss logic:
- * - For BUY: stopLoss < price
- * - For SHORT: stopLoss > price
+ * Validate stop loss logic
+ * For BUY orders: stop loss must be below entry price
+ * For SELL orders: stop loss must be above entry price
+ * @param payload - Webhook payload containing order details
+ * @returns True if stop loss is valid for the order type
  */
 function isValidStopLoss(payload: WebhookPayload): boolean {
     if (!payload.stopLoss) return false;
@@ -67,15 +76,20 @@ function isValidStopLoss(payload: WebhookPayload): boolean {
 }
 
 /**
- * Check if the action is an entry action (BUY or SELL).
+ * Check if the action is an entry action
+ * @param action - Action type from webhook
+ * @returns True if action is "ENTRY"
  */
 function isEntryAction(action: string): boolean {
     return action === "ENTRY";
 }
 
 /**
- * Main signal validation function.
- * Checks symbol, stop loss, and position status.
+ * Main signal validation function
+ * Validates symbol existence, stop loss logic, and position status
+ * @param payload - Webhook payload to validate
+ * @param context - Optional Azure Function invocation context
+ * @returns Validation result with isValid flag and optional reason/skipped status
  */
 export async function validateSignal(
     payload: WebhookPayload,
@@ -87,16 +101,13 @@ export async function validateSignal(
             return { isValid: false, reason: `Invalid symbol: ${payload.symbol}` };
         }
 
-        // If no user address, skip position checks
         const userAddress = process.env.HYPERLIQUID_USER_ADDRESS;
         if (!userAddress) {
             return { isValid: true };
         }
 
-        // Check for open position (both in DB and on exchange)
         const hasPosition = await hasOpenPosition(payload.symbol, payload.strategy, userAddress);
 
-        // Prevent duplicate entry for the same strategy
         if (isEntryAction(payload.action) && hasPosition) {
             return {
                 isValid: false,

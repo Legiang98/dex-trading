@@ -4,7 +4,6 @@ import { buildOrder } from './buildOrder';
 import { executeOrder } from './executeOrder';
 import { logTrade } from './logTrade';
 import { closeOrder } from './closeOrder';
-import { updateStopLoss } from './trailingStoploss';
 
 export const services = {
     parseWebhook,
@@ -13,13 +12,12 @@ export const services = {
     executeOrder,
     logTrade,
     closeOrder,
-    updateStopLoss
 }
 
 /**
  * Export individual services for direct imports if needed
  */
-export { parseWebhook, validateSignal, buildOrder, executeOrder, logTrade, closeOrder, updateStopLoss };
+export { parseWebhook, validateSignal, buildOrder, executeOrder, logTrade, closeOrder };
 
 /**
  * Export types
