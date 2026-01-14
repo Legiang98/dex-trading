@@ -148,7 +148,8 @@ const appSettings = new web.WebAppApplicationSettings("hyperliquid-app-settings"
         APPLICATIONINSIGHTS_CONNECTION_STRING: appInsights.connectionString,
         ApplicationInsightsAgent_EXTENSION_VERSION: "~3",
 
-        TELEGRAM_ENABLED: 'true'
+        TELEGRAM_ENABLED: "true",
+        TABLE_NAME: "orders"
     }
 });
 

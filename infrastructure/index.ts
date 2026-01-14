@@ -8,3 +8,4 @@ import "./shared";
 // Import Hyperliquid function app infrastructure
 import "./functionApps/tableStorage"
 import "./functionApps/hyperliquid";
+import "./functionApps/apim"
