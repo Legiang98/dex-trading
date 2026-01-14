@@ -1,4 +1,4 @@
-import { WebhookPayload, AssetMeta } from "../types";
+import { WebhookPayload } from "../types";
 import * as hl from "@nktkas/hyperliquid";
 import { formatPrice } from "@nktkas/hyperliquid/utils";
 import { AppError } from "../helpers/errorHandler";
@@ -6,9 +6,9 @@ import { HTTP } from "../constants/http";
 
 /**
  * Normalize order size for HyperLiquid orders
- * @param symbol The trading symbol
- * @param size The original size
- * @param decimals Number of decimal places supported by the exchange for this asset
+ * @param symbol - The trading symbol
+ * @param size - The original size
+ * @param decimals - Number of decimal places supported by the exchange for this asset
  * @returns Normalized size
  */
 function normalizeOrderSize(
@@ -22,8 +22,14 @@ function normalizeOrderSize(
 
 
 /**
-* Validate the stop loss price with liquidation price
-*/
+ * Validate the stop loss price against liquidation price
+ * @param order - Order direction ("buy" or "sell")
+ * @param price - Entry price
+ * @param currentLeverage - Current leverage value
+ * @param positionSize - Size of the position
+ * @param stopLossPrice - Proposed stop loss price
+ * @returns True if stop loss is valid (above liquidation for buy, below for sell)
+ */
 function validateStoploss(
     order: "buy" | "sell",
     price: number,
@@ -45,8 +51,10 @@ function validateStoploss(
 
 /**
  * Build order request from trading signal
- * Calculates position size based on fixed USD amount
- * Returns enriched WebhookPayload with quantity and normalized prices
+ * Calculates position size based on fixed USD amount and validates stop loss
+ * @param signal - Webhook payload containing trading signal
+ * @param context - Optional Azure Function context for logging
+ * @returns Enriched WebhookPayload with quantity and normalized prices
  */
 export async function buildOrder(signal: WebhookPayload, context?: any): Promise<WebhookPayload> {
 
@@ -128,7 +136,7 @@ export async function buildOrder(signal: WebhookPayload, context?: any): Promise
 
     const rawSize = fixedUsdAmount / Math.abs(marketPrice - stopLossPrice);
     const normalizedQuantity = normalizeOrderSize(signal.symbol, rawSize, szDecimalsSymbol);
-
+    const positionValue = normalizedQuantity * marketPrice;
     /**
      * Format prices using official SDK function
      * - Handles up to 5 significant figures
@@ -159,6 +167,7 @@ export async function buildOrder(signal: WebhookPayload, context?: any): Promise
         ...signal,
         quantity: normalizedQuantity,
         price: normalizedPrice,
-        stopLoss: normalizedStopLoss
+        stopLoss: normalizedStopLoss,
+        positionValue,
     };
 }

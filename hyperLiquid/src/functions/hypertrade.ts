@@ -5,7 +5,6 @@ import { WebhookPayload } from "../types";
 import { HTTP } from "../constants/http";
 import { httpResponse } from "../helpers/httpResponse";
 import { AppError, handleError } from "../helpers/errorHandler";
-import { sendTelegramMessage } from "../helpers/telegram";
 import { appInit } from "../helpers/appInit";
 const {
     parseWebhook,
@@ -13,7 +12,6 @@ const {
     buildOrder,
     executeOrder,
     closeOrder,
-    updateStopLoss,
     logTrade
 } = services;
 
@@ -40,7 +38,6 @@ async function hyperLiquidWebhook(
         */
         const rawPayload = await webhookSchema.validateAsync(body, { abortEarly: false }) as WebhookPayload;
         const payload = parseWebhook(rawPayload);
-        context.log("Parsed Payload:", payload);
         const validation = await validateSignal(payload, context);
         context.log("Validation Result:", validation);
 
@@ -58,16 +55,12 @@ async function hyperLiquidWebhook(
                 const tradeOrder = await buildOrder(payload, context);
                 context.log("Built Order Request:", tradeOrder);
                 orderResult = await executeOrder(tradeOrder, context);
+                context.log("Execute Order: ", orderResult);
                 break;
 
             case "EXIT":
                 orderResult = await closeOrder(payload, context);
-                context.log("Close Order Result:", orderResult);
-                break;
-
-            case "UPDATE_STOP":
-                orderResult = await updateStopLoss(payload, context);
-                context.log("Update Stop Loss Result:", orderResult);
+                context.log("Close Order: ", orderResult);
                 break;
 
             default:

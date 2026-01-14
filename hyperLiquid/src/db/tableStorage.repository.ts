@@ -7,9 +7,19 @@ if (!connectionString) {
     throw new Error('AZURE_STORAGE_CONNECTION_STRING is not set');
 }
 
-const tableClient = TableClient.fromConnectionString(connectionString, "orders");
+const tableName = process.env.TABLE_NAME || "orders";
+const tableClient = TableClient.fromConnectionString(connectionString, tableName);
 
-// Helper to convert OrderRecord to TableEntity
+// ============================================================================
+// HELPER FUNCTIONS - Internal utilities
+// ============================================================================
+
+/**
+ * Convert NewOrder to Azure Table Storage entity
+ * @param order - Order data to convert
+ * @param id - Unique identifier (UUID) for the row key
+ * @returns Table entity ready for storage
+ */
 function orderToEntity(order: NewOrder, id: string): TableEntity {
     const partitionKey = `${order.symbol}_${order.strategy}`;
     const rowKey = id;
@@ -20,73 +30,56 @@ function orderToEntity(order: NewOrder, id: string): TableEntity {
         userAddress: order.user_address,
         symbol: order.symbol,
         strategy: order.strategy,
-        quantity: order.quantity.toString(), // Store as string to avoid precision issues
-        orderType: order.order_type || '',
-        action: order.action,
+        quantity: order.quantity.toString(),
+        orderType: order.order_type,
         price: order.price.toString(),
+        oid: order.oid,
+        stopLossOid: order.stopLossOid || '',
+        stopLossPrice: order.stopLossPrice ? order.stopLossPrice.toString() : '',
         pnl: '',
-        oid: order.oid || '',
         status: order.status,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
     };
 }
 
-// Helper to convert TableEntity to OrderRecord
+/**
+ * Convert Azure Table Storage entity to OrderRecord
+ * @param entity - Table entity from Azure Storage
+ * @returns Typed OrderRecord object
+ */
 function entityToOrder(entity: any): OrderRecord {
     return {
+        partitionKey: entity.partitionKey as string,
         id: entity.rowKey as string,
         user_address: entity.userAddress as string,
         symbol: entity.symbol as string,
         strategy: entity.strategy as string,
         quantity: parseFloat(entity.quantity as string),
         order_type: entity.orderType as string,
-        action: entity.action as string,
         price: parseFloat(entity.price as string),
-        pnl: entity.pnl ? parseFloat(entity.pnl as string) : undefined,
         oid: entity.oid as string,
+        stopLossOid: entity.stopLossOid as string || undefined,
+        stopLossPrice: entity.stopLossPrice ? parseFloat(entity.stopLossPrice as string) : undefined,
+        pnl: entity.pnl ? parseFloat(entity.pnl as string) : undefined,
         status: entity.status as string,
         created_at: new Date(entity.createdAt as string),
         updated_at: new Date(entity.updatedAt as string),
     };
 }
 
-/**
- * Find an open order by symbol and strategy
- * Uses efficient partition key query
- */
-export async function findOpenOrder(
-    symbol: string,
-    strategy: string
-): Promise<OrderRecord | null> {
-    const partitionKey = `${symbol}_${strategy}`;
-
-    try {
-        // Query by partition key and filter by status
-        const entities = tableClient.listEntities({
-            queryOptions: {
-                filter: `PartitionKey eq '${partitionKey}' and status eq 'open'`
-            }
-        });
-
-        // Get the first (most recent) open order
-        for await (const entity of entities) {
-            return entityToOrder(entity);
-        }
-
-        return null;
-    } catch (error) {
-        console.error('Error finding open order:', error);
-        throw error;
-    }
-}
+// ============================================================================
+// PUBLIC API - Main Functions (ordered by typical workflow)
+// ============================================================================
 
 /**
- * Insert a new order
+ * Insert a new order into the database
+ * Generates UUID for row key and creates partition key from symbol and strategy
+ * @param order - New order data to insert
+ * @returns Created order record with generated ID
  */
 export async function insertOrder(order: NewOrder): Promise<OrderRecord> {
     try {
-        // Generate UUID for row key
         const id = crypto.randomUUID();
         const entity = orderToEntity(order, id);
 
@@ -100,124 +93,52 @@ export async function insertOrder(order: NewOrder): Promise<OrderRecord> {
 }
 
 /**
- * Update order OID
+ * Build filter string from array of conditions
+ * @param filters - Array of filter conditions
+ * @returns Combined filter string
  */
-export async function updateOrderOid(
-    orderId: string,
-    oid: string
-): Promise<void> {
-    try {
-        // We need to find the entity first to get its partition key
-        // This is a limitation of Table Storage - we need both keys to update
-        const entities = tableClient.listEntities({
-            queryOptions: {
-                filter: `RowKey eq '${orderId}'`
-            }
-        });
-
-        for await (const entity of entities) {
-            const updateEntity = {
-                partitionKey: entity.partitionKey!,
-                rowKey: entity.rowKey!,
-                oid,
-                updatedAt: new Date().toISOString(),
-            };
-
-            await tableClient.updateEntity(updateEntity, "Merge");
-            return;
-        }
-
-        throw new Error(`Order with ID ${orderId} not found`);
-    } catch (error) {
-        console.error('Error updating order OID:', error);
-        throw error;
+function buildFilter(filters: string[]): string {
+    if (filters.length === 0) {
+        throw new Error("At least one filter must be provided");
     }
+    return filters.join(" and ");
 }
 
 /**
- * Close an order by ID
+ * Find an open order by symbol and strategy
+ * Uses efficient query filtering on symbol, strategy, and status
+ * @param options - Query options
+ * @returns First matching open order or null if none found
  */
-export async function closeOrder(
-    orderId: string,
-    pnl: number
-): Promise<void> {
-    try {
-        const entities = tableClient.listEntities({
-            queryOptions: {
-                filter: `RowKey eq '${orderId}'`
-            }
-        });
+export async function getOrder(options: {
+    symbol?: string;
+    strategy?: string;
+    id?: string;
+    status?: string;
+}): Promise<OrderRecord | null> {
 
-        for await (const entity of entities) {
-            const updateEntity = {
-                partitionKey: entity.partitionKey!,
-                rowKey: entity.rowKey!,
-                status: 'closed',
-                pnl: pnl.toString(),
-                updatedAt: new Date().toISOString(),
-            };
+    const filters: string[] = [];
 
-            await tableClient.updateEntity(updateEntity, "Merge");
-            return;
-        }
-
-        throw new Error(`Order with ID ${orderId} not found`);
-    } catch (error) {
-        console.error('Error closing order:', error);
-        throw error;
+    if (options.id) {
+        filters.push(`RowKey eq '${options.id}'`);
     }
-}
 
-/**
- * Close all open orders for a symbol and strategy
- */
-export async function closeAllOrders(
-    symbol: string,
-    strategy: string,
-    pnl: number
-): Promise<void> {
-    const partitionKey = `${symbol}_${strategy}`;
-
-    try {
-        const entities = tableClient.listEntities({
-            queryOptions: {
-                filter: `PartitionKey eq '${partitionKey}' and status eq 'open'`
-            }
-        });
-
-        const updatePromises: Promise<any>[] = [];
-
-        for await (const entity of entities) {
-            const updateEntity = {
-                partitionKey: entity.partitionKey!,
-                rowKey: entity.rowKey!,
-                status: 'closed',
-                pnl: pnl.toString(),
-                updatedAt: new Date().toISOString(),
-            };
-
-            updatePromises.push(tableClient.updateEntity(updateEntity, "Merge"));
-        }
-
-        await Promise.all(updatePromises);
-    } catch (error) {
-        console.error('Error closing all orders:', error);
-        throw error;
+    if (options.symbol) {
+        filters.push(`symbol eq '${options.symbol}'`);
     }
-}
 
-/**
- * Find an open order by symbol and OID
- */
-export async function findOpenOrderByOid(
-    symbol: string,
-    oid: string
-): Promise<OrderRecord | null> {
+    if (options.strategy) {
+        filters.push(`strategy eq '${options.strategy}'`);
+    }
+
+    if (options.status) {
+        filters.push(`status eq '${options.status}'`);
+    }
+
     try {
-        // Query by OID and symbol
         const entities = tableClient.listEntities({
             queryOptions: {
-                filter: `oid eq '${oid}' and symbol eq '${symbol}' and status eq 'open'`
+                filter: buildFilter(filters)
             }
         });
 
@@ -227,7 +148,64 @@ export async function findOpenOrderByOid(
 
         return null;
     } catch (error) {
-        console.error('Error finding order by OID:', error);
+        console.error('Error finding open order:', error);
+        throw error;
+    }
+}
+
+/**
+ * Update an order with partial data
+ * @param id - Row key (ID) of the order to update
+ * @param updates - Partial order data to update
+ */
+export async function updateOrder(
+    id: string,
+    updates: Partial<{
+        status: string;
+        pnl: number;
+        oid: string;
+        stopLossOid: string;
+        stopLossPrice: number;
+    }>
+): Promise<void> {
+    try {
+        const entities = tableClient.listEntities({
+            queryOptions: {
+                filter: `RowKey eq '${id}'`
+            }
+        });
+
+        for await (const entity of entities) {
+            const updateEntity: any = {
+                partitionKey: entity.partitionKey!,
+                rowKey: entity.rowKey!,
+                updatedAt: new Date().toISOString(),
+            };
+
+            // Add only the fields that are provided
+            if (updates.status !== undefined) {
+                updateEntity.status = updates.status;
+            }
+            if (updates.pnl !== undefined) {
+                updateEntity.pnl = updates.pnl.toString();
+            }
+            if (updates.oid !== undefined) {
+                updateEntity.oid = updates.oid.toString();
+            }
+            if (updates.stopLossOid !== undefined) {
+                updateEntity.stopLossOid = updates.stopLossOid.toString();
+            }
+            if (updates.stopLossPrice !== undefined) {
+                updateEntity.stopLossPrice = updates.stopLossPrice.toString();
+            }
+
+            await tableClient.updateEntity(updateEntity, "Merge");
+            return;
+        }
+
+        throw new Error(`Order with ID ${id} not found`);
+    } catch (error) {
+        console.error('Error updating order:', error);
         throw error;
     }
 }

@@ -12,8 +12,6 @@ export const webhookSchema = Joi.object({
     .required(),
   price: Joi.number().required(),
   stopLoss: Joi.number().optional(),
-  strategy: Joi.string()
-    .valid("baseline_v1.2", "turtle", "sonicR") 
-    .required(),
+  strategy: Joi.string().optional(),
   orderId: Joi.string().optional(),
 });

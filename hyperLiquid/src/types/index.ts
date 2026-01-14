@@ -28,11 +28,13 @@ export interface WebhookPayload {
     strategy: string;
     orderId?: string;
     quantity?: number; // Calculated by buildOrder
+    positionValue?: number; // Calculated by buildOrder
 }
 
 export interface OrderResult {
     success: boolean;
     orderId?: string;
+    stopLossOrderId?: string;
     dbOrderId?: string;
     message?: string;
     error?: string;

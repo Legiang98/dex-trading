@@ -1,15 +1,27 @@
 import { WebhookPayload, OrderResult } from "../types";
 import * as hl from "@nktkas/hyperliquid";
 import { formatPrice } from "@nktkas/hyperliquid/utils";
-import { findOpenOrder, closeAllOrders } from "../db/tableStorage.repository";
-import { getEnvConfig, createClients, getAssetInfo, getPosition } from "../helpers/hyperliquid.helpers";
+import { updateOrder } from "../db/tableStorage.repository";
 import { AppError } from "../helpers/errorHandler";
 import { HTTP } from "../constants/http";
-import { sendTelegramMessage } from "../helpers/telegram";
+import { sendNotification } from "../helpers/telegram";
 import { getMarketPrice } from "../helpers/marketPrice.helpers";
 
+import {
+    getEnvConfig,
+    createClients,
+    getAssetInfo,
+    getStrategyPosition,
+    getOrderPnl,
+    extractOrderId
+} from "../helpers/hyperliquid.helpers";
 /**
  * Cancel all open orders for a symbol (including stop loss)
+ * @param exchangeClient - HyperLiquid exchange client
+ * @param infoClient - HyperLiquid info client
+ * @param userAddress - User's wallet address
+ * @param symbol - Trading symbol
+ * @param assetId - Asset ID from HyperLiquid meta data
  */
 async function cancelOpenOrders(
     exchangeClient: hl.ExchangeClient,
@@ -34,7 +46,10 @@ async function cancelOpenOrders(
 
 /**
  * Close an open position by placing a limit order at near-market price
- * This is used for EXIT action to close positions
+ * Cancels all open orders, calculates PnL, and sends notification
+ * @param signal - Webhook payload containing EXIT signal
+ * @param context - Optional Azure Function context for logging
+ * @returns Order result with success status and message
  */
 export async function closeOrder(
     signal: WebhookPayload,
@@ -47,30 +62,19 @@ export async function closeOrder(
         const { exchangeClient, infoClient } = createClients(privateKey, isTestnet);
         const { assetInfo, assetId } = await getAssetInfo(infoClient, signal.symbol);
 
-        // Find open position from database
-        const dbOrder = await findOpenOrder(signal.symbol, signal.strategy);
-        if (!dbOrder) {
-            return { success: false, error: `No open position found for ${signal.symbol}` };
-        }
-
-        // Get current position from HyperLiquid
-        const { positionSize, isBuy } = await getPosition(infoClient, userAddress, signal.symbol);
-        const size = positionSize.toFixed(assetInfo.szDecimals);
+        // Get current position from HyperLiquid and Database
+        const { strategyPosition, isBuy, id, oid } = await getStrategyPosition(infoClient, userAddress, signal.symbol, signal.strategy);
 
         // Get near-market price for quick execution
         const closePrice = await getMarketPrice(infoClient, signal.symbol, isBuy);
-        console.log(`[closeOrder] Symbol: ${signal.symbol}, Market price: ${closePrice}`);
+        const marketPrice = formatPrice(closePrice, assetInfo.szDecimals);
 
-        // Format price using official SDK function
-        const formattedPrice = formatPrice(closePrice, assetInfo.szDecimals);
-
-        // Place closing order (opposite direction of position)
         const closeResponse = await exchangeClient.order({
             orders: [{
                 a: assetId,
                 b: !isBuy, // Opposite of current position
-                p: formattedPrice,
-                s: size,
+                p: marketPrice,
+                s: strategyPosition,
                 r: true, // Reduce-only to ensure it only closes position
                 t: { limit: { tif: "Gtc" } } // Good-til-cancel to ensure full position closure
             }],
@@ -78,40 +82,33 @@ export async function closeOrder(
         });
 
         const orderStatus = closeResponse.response.data.statuses[0];
+        const closeOrderId = extractOrderId(orderStatus);
         if ('error' in orderStatus) {
             throw new AppError(`Failed to close position: ${orderStatus.error}`, HTTP.BAD_REQUEST);
         }
 
-        // Cancel any remaining orders (stop loss, etc.)
-        // await cancelOpenOrders(exchangeClient, infoClient, userAddress, signal.symbol, assetId);
+        const pnlData = await getOrderPnl(infoClient, userAddress, oid);
+        await updateOrder(id, {
+            status: 'closed',
+            pnl: pnlData.netPnl,
+            stopLossOid: closeOrderId.toString()
+        });
 
-        // Calculate PnL (simplified - can be enhanced)
-        const entryPrice = dbOrder.price;
-        const pnl = isBuy
-            ? (closePrice - entryPrice) * positionSize
-            : (entryPrice - closePrice) * positionSize;
-
-        // Update database - close ALL orders for this strategy (entry + stop loss)
-        await closeAllOrders(signal.symbol, signal.strategy, pnl);
-
-        // Send Telegram notification
-        try {
-            const chatId = process.env.TELEGRAM_CHAT_ID;
-            const token = process.env.TELEGRAM_BOT_TOKEN;
-
-            if (chatId && token) {
-                const action = isBuy ? "🟢 BUY" : "🔴 SELL";
-                const message = `✅ *Order Closed*\n${action} ${signal.symbol} @ ${signal.price}${signal.stopLoss ? `\nSL: ${signal.stopLoss}` : ""}`;
-                await sendTelegramMessage(chatId, token, message);
-            }
-        } catch (err) {
-            context.log.error("Failed to send Telegram notification:", err);
-        }
+        await sendNotification(
+            "Order Closed",
+            signal.symbol,
+            isBuy,
+            signal.price,
+            signal.stopLoss,
+            signal.positionValue
+        );
 
         return {
             success: true,
             message: `Closed ${signal.symbol} position`,
-            orderId: dbOrder.oid || undefined
+            orderId: oid.toString(),
+            stopLossOrderId: closeOrderId.toString(),
+            dbOrderId: id
         };
 
     } catch (error) {
