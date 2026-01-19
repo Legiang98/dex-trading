@@ -5,7 +5,6 @@ import { WebhookPayload } from "../types";
 import { HTTP } from "../constants/http";
 import { httpResponse } from "../helpers/httpResponse";
 import { AppError, handleError } from "../helpers/errorHandler";
-import { appInit } from "../helpers/appInit";
 const {
     parseWebhook,
     validateSignal,
@@ -14,8 +13,6 @@ const {
     closeOrder,
     logTrade
 } = services;
-
-appInit();
 
 async function hyperLiquidWebhook(
     request: HttpRequest,

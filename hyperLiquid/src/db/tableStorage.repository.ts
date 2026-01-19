@@ -1,14 +1,24 @@
 import { TableClient, TableEntity, AzureNamedKeyCredential } from "@azure/data-tables";
 import { OrderRecord, NewOrder } from '../types/order';
 
-// Initialize Table Client
-const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
-if (!connectionString) {
-    throw new Error('AZURE_STORAGE_CONNECTION_STRING is not set');
-}
+// Lazy initialization to prevent module load failures
+let tableClient: TableClient | null = null;
 
-const tableName = process.env.TABLE_NAME || "orders";
-const tableClient = TableClient.fromConnectionString(connectionString, tableName);
+/**
+ * Get or create the TableClient instance (lazy initialization)
+ * This prevents errors at module load time if env vars aren't ready
+ */
+function getTableClient(): TableClient {
+    if (!tableClient) {
+        const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
+        if (!connectionString) {
+            throw new Error('AZURE_STORAGE_CONNECTION_STRING is not set');
+        }
+        const tableName = process.env.TABLE_NAME || "orders";
+        tableClient = TableClient.fromConnectionString(connectionString, tableName);
+    }
+    return tableClient;
+}
 
 // ============================================================================
 // HELPER FUNCTIONS - Internal utilities
@@ -83,7 +93,7 @@ export async function insertOrder(order: NewOrder): Promise<OrderRecord> {
         const id = crypto.randomUUID();
         const entity = orderToEntity(order, id);
 
-        await tableClient.createEntity(entity);
+        await getTableClient().createEntity(entity);
 
         return entityToOrder(entity);
     } catch (error) {
@@ -136,7 +146,7 @@ export async function getOrder(options: {
     }
 
     try {
-        const entities = tableClient.listEntities({
+        const entities = getTableClient().listEntities({
             queryOptions: {
                 filter: buildFilter(filters)
             }
@@ -169,7 +179,7 @@ export async function updateOrder(
     }>
 ): Promise<void> {
     try {
-        const entities = tableClient.listEntities({
+        const entities = getTableClient().listEntities({
             queryOptions: {
                 filter: `RowKey eq '${id}'`
             }
@@ -199,7 +209,7 @@ export async function updateOrder(
                 updateEntity.stopLossPrice = updates.stopLossPrice.toString();
             }
 
-            await tableClient.updateEntity(updateEntity, "Merge");
+            await getTableClient().updateEntity(updateEntity, "Merge");
             return;
         }
 
