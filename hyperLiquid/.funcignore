@@ -12,3 +12,4 @@ deployment.zip
 docker-compose.yaml
 Makefile
 .claude
+node_modules
