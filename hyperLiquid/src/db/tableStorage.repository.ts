@@ -164,6 +164,30 @@ export async function getOrder(options: {
 }
 
 /**
+ * List all orders with 'open' status
+ * @returns Array of open order records
+ */
+export async function listAllOpenOrders(): Promise<OrderRecord[]> {
+    try {
+        const entities = getTableClient().listEntities({
+            queryOptions: {
+                filter: "status eq 'open'"
+            }
+        });
+
+        const openOrders: OrderRecord[] = [];
+        for await (const entity of entities) {
+            openOrders.push(entityToOrder(entity));
+        }
+
+        return openOrders;
+    } catch (error) {
+        console.error('Error listing all open orders:', error);
+        throw error;
+    }
+}
+
+/**
  * Update an order with partial data
  * @param id - Row key (ID) of the order to update
  * @param updates - Partial order data to update

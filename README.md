@@ -16,3 +16,7 @@ This project hosts backend logic using **Azure Functions (TypeScript, v4 model)*
 ├── src/               # Azure Functions source code
 ├── README.md
 ```
+
+run this to deploy
+
+func azure functionapp publish hyperliquid-dev-func
