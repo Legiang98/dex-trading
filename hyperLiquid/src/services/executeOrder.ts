@@ -22,82 +22,80 @@ export async function executeOrder(
             throw new AppError("Quantity is required. Did you call buildOrder first?", HTTP.BAD_REQUEST);
         }
 
-        const { privateKey, userAddress, isTestnet } = getEnvConfig();
+        const { privateKey, isTestnet, userAddress } = getEnvConfig();
         const { exchangeClient, infoClient } = createClients(privateKey, isTestnet);
-        const { assetInfo, assetId } = await getAssetInfo(infoClient, signal.symbol);
+        const { assetId } = await getAssetInfo(infoClient, signal.symbol);
 
-        const szDecimals = assetInfo.szDecimals;
-        const size = signal.quantity.toFixed(szDecimals);
         const isBuy = signal.type === "BUY";
+        const size = signal.quantity.toString();
 
-        // Use the already-formatted price from buildOrder (formatted with SDK's formatPrice)
-        // signal.price is already a string formatted according to HyperLiquid's rules
-        const formattedPrice = signal.price.toString();
+        // 1. Prepare Batched Orders (Main Entry + Stop Loss)
+        const orders: any[] = [{
+            a: assetId,
+            b: isBuy,
+            p: signal.price.toString(),
+            s: size,
+            r: false,
+            t: { limit: { tif: "Gtc" } }
+        }];
 
-        // Place main order at the formatted price
-        const orderResponse = await exchangeClient.order({
-            orders: [{
+        if (signal.stopLoss) {
+            orders.push({
                 a: assetId,
-                b: isBuy,
-                p: formattedPrice,
+                b: !isBuy,
+                p: signal.stopLoss.toString(),
                 s: size,
-                r: false,
-                t: { limit: { tif: "Gtc" } }
-            }],
+                r: true, // Reduce only
+                t: {
+                    trigger: {
+                        isMarket: true,
+                        triggerPx: signal.stopLoss.toString(),
+                        tpsl: "sl"
+                    }
+                }
+            });
+        }
+
+        // 2. Execute Batch Order (Single Network Call)
+        const orderResponse = await exchangeClient.order({
+            orders: orders,
             grouping: "na"
         });
 
-        const orderStatus = orderResponse.response.data.statuses[0];
-        const orderId = extractOrderId(orderStatus);
+        const statuses = orderResponse.response.data.statuses;
+        const mainOrderStatus = statuses[0];
+        const orderId = extractOrderId(mainOrderStatus);
 
         let stopLossOid: string | undefined;
-
-        // Place stop loss order if specified
-        if (signal.stopLoss) {
-            const stopLossResponse = await exchangeClient.order({
-                orders: [{
-                    a: assetId,
-                    b: !isBuy,
-                    p: signal.stopLoss.toString(),
-                    s: size,
-                    r: true,
-                    t: {
-                        trigger: {
-                            isMarket: true,
-                            triggerPx: signal.stopLoss.toString(),
-                            tpsl: "sl"
-                        }
-                    }
-                }],
-                grouping: "na"
-            });
-
-            const stopLossStatus = stopLossResponse.response.data.statuses[0];
-            stopLossOid = extractOrderId(stopLossStatus).toString();
+        if (signal.stopLoss && statuses[1]) {
+            stopLossOid = extractOrderId(statuses[1]).toString();
         }
 
-        // Insert single order record with stop loss info
-        const dbOrder = await insertOrder({
+        // 3. Database & Notifications (Parallel/Non-blocking)
+        const dbPromise = insertOrder({
             user_address: userAddress,
             symbol: signal.symbol,
             strategy: signal.strategy,
             quantity: signal.quantity,
             order_type: signal.type,
-            price: signal.price,
+            price: signal.price as number,
             oid: orderId.toString(),
             stopLossOid: stopLossOid,
-            stopLossPrice: signal.stopLoss,
+            stopLossPrice: signal.stopLoss as number,
             status: "open"
         });
 
-        await sendNotification(
+        // Fire and forget Telegram notification to save time
+        sendNotification(
             "Order Executed",
             signal.symbol,
             isBuy,
             signal.price,
             signal.stopLoss,
             signal.positionValue
-        );
+        ).catch(err => console.error("Notification failed:", err));
+
+        const dbOrder = await dbPromise;
 
         return {
             success: true,

@@ -21,9 +21,9 @@
   },
   "devDependencies": {
     "@types/dotenv": "^6.1.1",
-    "@types/node": "22.x",
-    "azure-functions-core-tools": "^4.x",
-    "rimraf": "^5.0.0",
+    "@types/node": "^25.5.0",
+    "azure-functions-core-tools": "^3.0.5682",
+    "rimraf": "^5.0.10",
     "typescript": "^5.9.3"
   },
   "engines": {

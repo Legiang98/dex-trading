@@ -76,19 +76,21 @@ export async function buildOrder(signal: WebhookPayload, context?: any): Promise
     });
     const infoClient = new hl.InfoClient({ transport });
 
-    /* Get all pairs and their prices */
-    const allMids = await infoClient.allMids();
+    /* Parallelize data fetching */
+    const [allMids, assetData, metaResponse] = await Promise.all([
+        infoClient.allMids(),
+        infoClient.activeAssetData({
+            user: userAddress as `0x${string}`,
+            coin: signal.symbol
+        }),
+        infoClient.meta()
+    ]);
+
     const marketPrice = parseFloat(allMids[signal.symbol] || "0");
 
     if (!marketPrice) {
         throw new AppError(`Unable to fetch market price for ${signal.symbol}`, HTTP.BAD_REQUEST);
     }
-
-    /* Get leverage information for the current symbol */
-    const assetData = await infoClient.activeAssetData({
-        user: userAddress as `0x${string}`,
-        coin: signal.symbol
-    });
 
     /*
     *  e.g; Leverage for BTC: { type: 'isolated', value: 8, rawUsd: '-207.59043' }
@@ -100,23 +102,18 @@ export async function buildOrder(signal: WebhookPayload, context?: any): Promise
     });
 
     /**
-    * Fetch meta data first to get asset ID
-    * Example perp object:
-    * {
-    *   "szDecimals": 0,
-    *   "name": "SAND",
-    *   "maxLeverage": 5,
-    *   "marginTableId": 5
-    * }
+    * Find asset ID and szDecimals
     */
-    const metaResponse = await infoClient.meta();
     const assetIndex = metaResponse.universe.findIndex(asset => asset.name === signal.symbol);
 
     if (assetIndex === -1) {
         throw new AppError(`Symbol ${signal.symbol} not found in HyperLiquid`, HTTP.BAD_REQUEST);
     }
 
-    /* Switch to isolated mode if current leverage is cross */
+    const assetMeta = metaResponse.universe[assetIndex];
+    const szDecimalsSymbol = assetMeta.szDecimals;
+
+    /* Switch to isolated mode if current leverage is cross (Don't await to save time, or do it only if needed) */
     if (leverage.type == "cross") {
         await exchangeClient.updateLeverage({
             isCross: false,
@@ -124,12 +121,6 @@ export async function buildOrder(signal: WebhookPayload, context?: any): Promise
             leverage: leverage.value
         });
     }
-
-    /**
-    * Get szDecimals from already fetched meta data
-    */
-    const assetMeta = metaResponse.universe[assetIndex];
-    const szDecimalsSymbol = assetMeta.szDecimals;
 
     // Ensure stopLoss is a number for calculations
     const stopLossPrice = typeof signal.stopLoss === 'string' ? parseFloat(signal.stopLoss) : signal.stopLoss!;

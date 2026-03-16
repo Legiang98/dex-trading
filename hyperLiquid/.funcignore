@@ -12,3 +12,7 @@ Makefile
 .env
 /src
 tsconfig.json
+node_modules
+obj
+bin
+dist/*.map
