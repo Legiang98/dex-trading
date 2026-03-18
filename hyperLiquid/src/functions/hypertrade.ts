@@ -1,78 +1,36 @@
-import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
-import { services } from "../services/index";
+import { app, HttpRequest, HttpResponseInit, InvocationContext, output } from "@azure/functions";
 import { webhookSchema } from "../validators/webhookSchema";
 import { WebhookPayload } from "../types";
 import { HTTP } from "../constants/http";
 import { httpResponse } from "../helpers/httpResponse";
-import { AppError, handleError } from "../helpers/errorHandler";
-const {
-    parseWebhook,
-    validateSignal,
-    buildOrder,
-    executeOrder,
-    closeOrder,
-    logTrade
-} = services;
+import { handleError } from "../helpers/errorHandler";
+
+const queueOutput = output.storageQueue({
+    queueName: "trade-signals",
+    connection: "AzureWebJobsStorage"
+});
 
 async function hyperLiquidWebhook(
     request: HttpRequest,
     context: InvocationContext
 ): Promise<HttpResponseInit> {
-
     try {
         const body = await request.json();
 
         /** 
-        * Step 1: Validate webhook schema
-        * Example parsed payload:
-        * {
-        *   symbol: "BTC",
-        *   action: "ENTRY",
-        *   type: "BUY",
-        *   price: 95000,
-        *   stopLoss: 94000
-        * }
+        * Step 1: Validate schema (Fast)
         */
         const rawPayload = await webhookSchema.validateAsync(body, { abortEarly: false }) as WebhookPayload;
-        const payload = parseWebhook(rawPayload);
-        const validation = await validateSignal(payload, context);
-        context.log("Validation Result:", validation);
-
-        if (!validation.isValid) {
-            return httpResponse(HTTP.BAD_REQUEST, validation.reason!);
-        }
 
         /**
-         * Step 2: Route based on action type
+         * Step 2: Push to Queue for background processing (Instant)
          */
-        let orderResult: any;
+        context.extraOutputs.set(queueOutput, JSON.stringify(rawPayload));
 
-        switch (payload.action.toUpperCase()) {
-            case "ENTRY":
-                const tradeOrder = await buildOrder(payload, context);
-                context.log("Built Order Request:", tradeOrder);
-                orderResult = await executeOrder(tradeOrder, context);
-                context.log("Execute Order: ", orderResult);
-                break;
-
-            case "EXIT":
-                orderResult = await closeOrder(payload, context);
-                context.log("Close Order: ", orderResult);
-                break;
-
-            default:
-                return httpResponse(HTTP.BAD_REQUEST, `Unknown action: ${payload.action}`);
-        }
-
-        if (!orderResult.success) {
-            return httpResponse(HTTP.BAD_REQUEST, orderResult.error || "Operation failed");
-        }
-
-        return httpResponse(HTTP.OK, orderResult.message || "Operation successful", {
-            orderId: orderResult.orderId,
-            dbOrderId: orderResult.dbOrderId
-        });
-
+        /**
+         * Step 3: Return success to TradingView (Prevents timeouts)
+         */
+        return httpResponse(HTTP.OK, "Signal received and queued successfully.");
 
     } catch (error) {
         return await handleError(error as Error, context);
@@ -82,5 +40,6 @@ async function hyperLiquidWebhook(
 app.http("hyperLiquidWebhook", {
     methods: ["POST"],
     authLevel: "function",
+    extraOutputs: [queueOutput],
     handler: hyperLiquidWebhook
 });
