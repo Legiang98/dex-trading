@@ -1,0 +1,39 @@
+{
+  "name": "hyperliquid-functions",
+  "version": "1.0.0",
+  "description": "",
+  "main": "dist/src/functions/*.js",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "clean": "rimraf dist",
+    "prestart": "npm run clean && npm run build",
+    "start": "func start",
+    "dev": "tsc -w & func start",
+    "start:dev": "npm run dev",
+    "test:signal": "npx ts-node test/test-signal.ts",
+    "test:python-signal": "python3 test/test-signal.py",
+    "test": "echo \"No tests yet...\""
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1014.0",
+    "@aws-sdk/client-sqs": "^3.1014.0",
+    "@aws-sdk/lib-dynamodb": "^3.1014.0",
+    "@nktkas/hyperliquid": "^0.27.1",
+    "aws-lambda": "^1.0.7",
+    "dotenv": "^17.2.3",
+    "joi": "^18.0.2",
+    "tslib": "^2.8.1"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.161",
+    "@types/dotenv": "^6.1.1",
+    "@types/node": "^25.5.0",
+    "esbuild": "^0.27.4",
+    "rimraf": "^5.0.10",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=16.9.0"
+  }
+}

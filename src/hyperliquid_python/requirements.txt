@@ -1,0 +1,3 @@
+hyperliquid-python-sdk
+pydantic>=2.10
+requests
